@@ -64,5 +64,10 @@ $ awslocal sqs send-message --queue-url "http://sqs.us-east-1.localhost.localsta
 
 When you run sqs-dispatch
 ```
-$ cargo run -- -E http://localhost:4956 -Q "http://sqs.us-east-1.localhost.localstack.cloud:4566/000000000000/example-queue" -e "echo" -e "I got a message: " -e "{}.messageId" -e "{}.body"
+# Export some fake credentials in AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY. Localstack accepts any credentials
+$ export AWS_ACCESS_KEY_ID=...
+$ export AWS_SECRET_ACCESS_KEY=...
+$ export AWS_REGION=us-east-1
+
+$ cargo run -- -E http://localhost:4566 -Q "http://sqs.us-east-1.localhost.localstack.cloud:4566/000000000000/example-queue" -e "echo" -e "I got a message: " -e "{}.messageId" -e "{}.body"
 ```
