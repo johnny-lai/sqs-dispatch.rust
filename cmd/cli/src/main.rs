@@ -1,7 +1,9 @@
-use aws_config::{BehaviorVersion};
-use aws_sdk_sqs::{Client, Error};
+use aws_config::BehaviorVersion;
+use aws_sdk_sqs::{types::Message, Client, Error};
 use clap::Parser;
+use sqs_dispatch::{Handler, Server};
 use std::process::Command;
+use tokio::{self};
 
 /// Pulls messages from SQS and executes the specified command
 #[derive(Debug, Parser)]
@@ -19,19 +21,14 @@ struct Cli {
     exec: Vec<String>,
 }
 
-async fn receive(client: &Client, args: &Cli) -> Result<(), Error> {
-    let rcv_message_output = client.receive_message().queue_url(&args.queue_url).send().await?;
+impl Handler for Cli {
+    fn call(&self, message: Message) {
+        println!("Got the message in handler: {:#?}", message);
+        if self.exec.len() > 0 {
+            let mut cmd = Command::new(&self.exec[0]);
 
-    println!("Messages from queue with url: {}", args.queue_url);
-
-    for message in rcv_message_output.messages.unwrap_or_default() {
-        println!("Got the message: {:#?}", message);
-
-        if args.exec.len() > 0 {
-            let mut cmd = Command::new(&args.exec[0]);
-
-            for i in 1..args.exec.len() {
-                let x = &args.exec[i];
+            for i in 1..self.exec.len() {
+                let x = &self.exec[i];
                 if x == "{}.messageId" {
                     if let Some(val) = &message.message_id {
                         cmd.arg(val);
@@ -48,9 +45,18 @@ async fn receive(client: &Client, args: &Cli) -> Result<(), Error> {
             println!("{:?}", cmd.output());
         }
     }
+}
 
+unsafe impl Send for Cli {}
 
-    Ok(())
+impl Clone for Cli {
+    fn clone(&self) -> Self {
+        Cli {
+            endpoint_url: self.endpoint_url.clone(),
+            queue_url: self.queue_url.clone(),
+            exec: self.exec.clone(),
+        }
+    }
 }
 
 #[tokio::main]
@@ -66,7 +72,12 @@ async fn main() -> Result<(), Error> {
     let config = loader.load().await;
 
     let client = Client::new(&config);
-    receive(&client, &args).await?;
+
+    let server = Server {
+        client: client.clone(),
+        queue_url: args.queue_url.clone(),
+    };
+    server.receive(args).await?;
 
     Ok(())
 }
