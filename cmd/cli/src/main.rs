@@ -2,8 +2,8 @@ use aws_config::BehaviorVersion;
 use aws_sdk_sqs::{types::Message, Client, Error};
 use clap::Parser;
 use sqs_dispatch::{Handler, Server};
-use std::process::Command;
-use tokio::{self};
+use std::{process::Command, time::Duration};
+use tokio::{self, signal};
 
 /// Pulls messages from SQS and executes the specified command
 #[derive(Debug, Parser)]
@@ -22,7 +22,7 @@ struct Cli {
 }
 
 impl Handler for Cli {
-    fn call(&self, message: Message) {
+    fn call(&self, message: &Message) {
         println!("Got the message in handler: {:#?}", message);
         if self.exec.len() > 0 {
             let mut cmd = Command::new(&self.exec[0]);
@@ -59,6 +59,52 @@ impl Clone for Cli {
     }
 }
 
+struct Sleep {}
+
+impl Handler for Sleep {
+    fn call(&self, message: &Message) {
+        println!("Got: {:#?}", message);
+        std::thread::sleep(Duration::from_secs(2));
+        println!("Done: {:#?}", message);
+    }
+}
+
+unsafe impl Send for Sleep {}
+
+impl Clone for Sleep {
+    fn clone(&self) -> Self {
+        Sleep {}
+    }
+}
+
+async fn shutdown_signal(handle: axum_server::Handle) {
+    let ctrl_c = async {
+        signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        signal::unix::signal(signal::unix::SignalKind::terminate())
+            .expect("failed to install signal handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
+
+    println!("Received termination signal shutting down");
+    handle.graceful_shutdown(Some(Duration::from_secs(10))); // 10 secs is how long docker will wait
+                                                             // to force shutdown
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Error> {
     let args = Cli::parse();
@@ -72,12 +118,20 @@ async fn main() -> Result<(), Error> {
     let config = loader.load().await;
 
     let client = Client::new(&config);
+    let server = Server::new(client.clone(), args.queue_url.clone(), Sleep {});
 
-    let server = Server {
-        client: client.clone(),
-        queue_url: args.queue_url.clone(),
-    };
-    server.receive(args).await?;
+    //Create a handle for our TLS server so the shutdown signal can all shutdown
+    let handle = axum_server::Handle::new();
+    //save the future for easy shutting down of redirect server
+    let shutdown_future = shutdown_signal(handle.clone());
+
+    server
+        .handle(handle)
+        .with_graceful_shutdown(shutdown_future)
+        .await
+        .unwrap();
+
+    println!("graceful shutdown complete");
 
     Ok(())
 }
