@@ -42,7 +42,7 @@ $ localstack start
 
 You can then create some SQS queues and assign it to `Q`.
 ```
-$ Q=`awslocal sqs create-queue --queue-name example-queue | jq ".QueueUrl"`
+$ Q=`awslocal sqs create-queue --queue-name example-queue | jq -r ".QueueUrl"`
 ```
 
 You can then send some messages to the queue
@@ -59,12 +59,20 @@ $ awslocal sqs send-message --queue-url "$Q" --message-body "Message 2"
 }
 ```
 
-When you run sqs-dispatch
+Before you run sqs-dispatch, you may need to set some fake AWS credentials for `localstack`.
 ```
 # Export some fake credentials in AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY. Localstack accepts any credentials
 export AWS_ACCESS_KEY_ID=...
 export AWS_SECRET_ACCESS_KEY=...
 export AWS_REGION=us-east-1
+```
 
+Print the mesage.
+```
 cargo run -- -E http://localhost:4566 -Q "$Q" -e "echo" -e "I got a message: " -e "{}.messageId" -e "{}.body"
+```
+
+Take 10 seconds to process each message.
+```
+cargo run -- -E http://localhost:4566 -Q "$Q" -e "sleep" -e "10"
 ```

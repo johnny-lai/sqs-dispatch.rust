@@ -59,24 +59,6 @@ impl Clone for Cli {
     }
 }
 
-struct Sleep {}
-
-impl Handler for Sleep {
-    fn call(&self, message: &Message) {
-        println!("Got: {:#?}", message);
-        std::thread::sleep(Duration::from_secs(2));
-        println!("Done: {:#?}", message);
-    }
-}
-
-unsafe impl Send for Sleep {}
-
-impl Clone for Sleep {
-    fn clone(&self) -> Self {
-        Sleep {}
-    }
-}
-
 async fn shutdown_signal(handle: axum_server::Handle) {
     let ctrl_c = async {
         signal::ctrl_c()
@@ -118,7 +100,7 @@ async fn main() -> Result<(), Error> {
     let config = loader.load().await;
 
     let client = Client::new(&config);
-    let server = Server::new(client.clone(), args.queue_url.clone(), Sleep {});
+    let server = Server::new(client.clone(), args.queue_url.clone(), args);
 
     //Create a handle for our TLS server so the shutdown signal can all shutdown
     let handle = axum_server::Handle::new();
