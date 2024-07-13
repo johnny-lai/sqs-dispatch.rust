@@ -1,17 +1,5 @@
-use aws_sdk_sqs::{
-    operation::{
-        change_message_visibility::{ChangeMessageVisibilityError, ChangeMessageVisibilityOutput},
-        change_message_visibility_batch::{
-            ChangeMessageVisibilityBatchError, ChangeMessageVisibilityBatchOutput,
-        },
-        delete_message::{DeleteMessageError, DeleteMessageOutput},
-        delete_message_batch::{DeleteMessageBatchError, DeleteMessageBatchOutput},
-        receive_message::{ReceiveMessageError, ReceiveMessageOutput},
-    },
-    types::{ChangeMessageVisibilityBatchRequestEntry, DeleteMessageBatchRequestEntry, Message},
-    Client, Error,
-};
-use aws_smithy_runtime_api::client::{orchestrator::HttpResponse, result::SdkError};
+use crate::sqs;
+use aws_sdk_sqs::{types::Message, Client, Error};
 use axum_server;
 use std::{
     collections::HashSet,
@@ -89,97 +77,6 @@ where
         }
     }
 
-    /// Receive messages from the queue.
-    async fn receive_message(
-        &self,
-    ) -> Result<ReceiveMessageOutput, SdkError<ReceiveMessageError, HttpResponse>> {
-        self.client
-            .receive_message()
-            .queue_url(&self.queue_url)
-            .send()
-            .await
-    }
-
-    /// Change visibility of a given message
-    #[allow(dead_code)]
-    async fn change_message_visibility(
-        &self,
-        receipt_handle: &String,
-    ) -> Result<ChangeMessageVisibilityOutput, SdkError<ChangeMessageVisibilityError, HttpResponse>>
-    {
-        self.client
-            .change_message_visibility()
-            .queue_url(&self.queue_url)
-            .receipt_handle(receipt_handle)
-            .visibility_timeout(1) // Seconds
-            .send()
-            .await
-    }
-
-    /// Change visibility of multiple messages.
-    async fn change_message_visibility_batch(
-        &self,
-        receipt_handles: &HashSet<String>,
-    ) -> Result<
-        ChangeMessageVisibilityBatchOutput,
-        SdkError<ChangeMessageVisibilityBatchError, HttpResponse>,
-    > {
-        let op = self
-            .client
-            .change_message_visibility_batch()
-            .queue_url(&self.queue_url);
-
-        let mut entries: Vec<ChangeMessageVisibilityBatchRequestEntry> = Vec::new();
-        // Create ChangeMessageVisibilityBatchRequestEntry for each message
-        for (i, message_id) in receipt_handles.iter().enumerate() {
-            let entry = ChangeMessageVisibilityBatchRequestEntry::builder()
-                .id(i.to_string()) // Unique identifier for the request entry
-                .receipt_handle(message_id)
-                .visibility_timeout(1) // Setting the visibility timeout value
-                .build();
-            entries.push(entry.unwrap());
-        }
-
-        op.set_entries(Some(entries)).send().await
-    }
-
-    /// Delete a single message.
-    #[allow(dead_code)]
-    async fn delete_message(
-        &self,
-        receipt_handle: &String,
-    ) -> Result<DeleteMessageOutput, SdkError<DeleteMessageError, HttpResponse>> {
-        self.client
-            .delete_message()
-            .queue_url(&self.queue_url)
-            .receipt_handle(receipt_handle)
-            .send()
-            .await
-    }
-
-    /// Delete a batch of messages
-    async fn delete_message_batch(
-        &self,
-        message_ids: &HashSet<String>,
-    ) -> Result<DeleteMessageBatchOutput, SdkError<DeleteMessageBatchError, HttpResponse>> {
-        let op = self
-            .client
-            .delete_message_batch()
-            .queue_url(&self.queue_url);
-
-        let mut entries: Vec<DeleteMessageBatchRequestEntry> = Vec::new();
-        // Create ChangeMessageVisibilityBatchRequestEntry for each message
-        for (i, message_id) in message_ids.iter().enumerate() {
-            let entry = DeleteMessageBatchRequestEntry::builder()
-                .id(i.to_string()) // Unique identifier for the request entry
-                .receipt_handle(message_id)
-                .build();
-            entries.push(entry.unwrap());
-        }
-
-        op.set_entries(Some(entries)).send().await
-    }
-
     fn handle_message(&mut self, message: Message) {
         let h = self.handler.clone();
         if let Some(receipt_handle) = &message.receipt_handle {
@@ -212,7 +109,7 @@ where
         // Mark jobs as done
         if finished.len() > 0 {
             println!("finshed: {:#?}", finished);
-            let ret = self.delete_message_batch(&finished).await;
+            let ret = sqs::delete_message_batch(&self.client, &self.queue_url, &finished).await;
             println!("delete_message_batch: {:#?}", ret)
         }
     }
@@ -238,7 +135,7 @@ where
         // Mark jobs as done
         if finished.len() > 0 {
             println!("finshed: {:#?}", finished);
-            let ret = self.delete_message_batch(&finished).await;
+            let ret = sqs::delete_message_batch(&self.client, &self.queue_url, &finished).await;
             println!("delete_message_batch: {:#?}", ret)
         }
     }
@@ -246,7 +143,9 @@ where
     /// Call periodically to signal messages are being processed.
     async fn tick_inflight(&mut self) {
         if self.inflight.len() > 0 {
-            let ret = self.change_message_visibility_batch(&self.inflight).await;
+            let ret =
+                sqs::change_message_visibility_batch(&self.client, &self.queue_url, &self.inflight)
+                    .await;
             println!("change_message_visibility: {:#?}", ret);
         }
     }
@@ -289,7 +188,7 @@ where
                     _ = interval.tick() => {
                         server.tick_inflight().await;
                     },
-                    result = server.receive_message() => {
+                    result = sqs::receive_message(&server.client, &server.queue_url) => {
                         let msg = result.unwrap();
                         for message in msg.messages.unwrap_or_default() {
                             server.handle_message(message);

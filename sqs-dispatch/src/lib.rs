@@ -5,7 +5,7 @@
 //!   message as needed.
 //! * When the task completes, it will delete the message from the queue.
 
-mod util;
+mod sqs;
 
 pub mod dispatch;
 pub use dispatch::*;
