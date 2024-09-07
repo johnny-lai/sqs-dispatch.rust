@@ -7,12 +7,26 @@ use aws_sdk_sqs::{
         delete_message::{DeleteMessageError, DeleteMessageOutput},
         delete_message_batch::{DeleteMessageBatchError, DeleteMessageBatchOutput},
         receive_message::{ReceiveMessageError, ReceiveMessageOutput},
+        send_message::{SendMessageError, SendMessageOutput},
     },
     types::{ChangeMessageVisibilityBatchRequestEntry, DeleteMessageBatchRequestEntry},
     Client,
 };
 use aws_smithy_runtime_api::client::{orchestrator::HttpResponse, result::SdkError};
-use std::collections::HashSet;
+use std::{collections::HashSet, convert::Into};
+
+pub(crate) async fn send_message(
+    client: &Client,
+    queue_url: &String,
+    message_body: impl Into<String>,
+) -> Result<SendMessageOutput, SdkError<SendMessageError, HttpResponse>> {
+    client
+        .send_message()
+        .queue_url(queue_url)
+        .message_body(message_body)
+        .send()
+        .await
+}
 
 /// Receive messages from the queue.
 pub(crate) async fn receive_message(
@@ -99,4 +113,22 @@ pub(crate) async fn delete_message_batch(
     }
 
     op.set_entries(Some(entries)).send().await
+}
+
+#[cfg(test)]
+mod tests {
+    // Note this useful idiom: importing names from outer (for mod tests) scope.
+    use super::*;
+    use crate::test_helpers::TestClient;
+
+    #[tokio::test]
+    async fn test_add() {
+        let t = TestClient::new().await;
+        send_message(&t.client, &t.queue_url, "Hello, world!")
+            .await
+            .unwrap();
+        let result = receive_message(&t.client, &t.queue_url).await.unwrap();
+        let messages = result.messages();
+        assert_eq!(messages.len(), 1);
+    }
 }

@@ -1,0 +1,11 @@
+services:
+  rust:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:5000"
+    depends_on:
+      - localstack
+  localstack:
+    image: "localstack/localstack:latest"

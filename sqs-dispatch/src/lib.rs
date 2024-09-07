@@ -9,3 +9,6 @@ mod sqs;
 
 pub mod dispatch;
 pub use dispatch::*;
+
+#[cfg(test)]
+mod test_helpers;
